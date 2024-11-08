@@ -1,5 +1,3 @@
-# app.py
-
 from flask import Flask
 from flask_restx import Api, Resource, fields, Namespace
 import sqlite3
@@ -29,7 +27,68 @@ services_ns = api.namespace('services', description='PM2 services operations')
 status_ns = api.namespace('status', description='Service status operations')
 metrics_ns = api.namespace('metrics', description='Service metrics operations')
 
-# Model definitions remain the same...
+# Model definitions (as before)...
+
+def determine_status(status_str, cpu_usage, memory_usage, has_error, has_warning):
+    """Determine service health status"""
+    if status_str == "stopped":
+        return 0, Config.STATUS_COLORS[0]
+    elif has_error:
+        return 3, Config.STATUS_COLORS[3]
+    elif has_warning or cpu_usage > Config.HIGH_CPU_THRESHOLD or memory_usage > Config.HIGH_MEMORY_THRESHOLD:
+        return 1, Config.STATUS_COLORS[1]
+    return 2, Config.STATUS_COLORS[2]
+
+def log_status():
+    """Log current status of all PM2 services"""
+    try:
+        conn = sqlite3.connect(Config.DB_PATH)
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        services = get_all_services()
+        if not services:
+            logger.warning("No services found to log")
+            return
+
+        for service in services:
+            try:
+                service_name = service.get("name", "Unknown")
+                pm2_env = service.get("pm2_env", {})
+                monit = service.get("monit", {})
+                
+                status_str = pm2_env.get("status", "stopped")
+                cpu_usage = monit.get("cpu", 0.0)
+                memory_usage = monit.get("memory", 0.0) / (1024 * 1024)  # Convert to MB
+                
+                has_error, has_warning = check_logs_for_errors(service_name)
+                status_code, status_color = determine_status(
+                    status_str, cpu_usage, memory_usage, has_error, has_warning
+                )
+
+                cursor.execute('''
+                    INSERT INTO service_status 
+                    (service_name, timestamp, status, status_color, cpu_usage, 
+                    memory_usage, has_error, has_warning)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (service_name, timestamp, status_code, status_color, 
+                    cpu_usage, memory_usage, has_error, has_warning))
+                
+                logger.info(
+                    f"Logged {service_name} - Status: {status_color}, "
+                    f"CPU: {cpu_usage}%, Memory: {memory_usage:.1f}MB"
+                )
+            except Exception as e:
+                logger.error(f"Error logging service {service_name}: {str(e)}")
+                continue
+
+        conn.commit()
+        logger.info(f"Successfully logged status for {len(services)} services")
+    except Exception as e:
+        logger.error(f"Error in log_status: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
 
 def setup_database():
     """Initialize SQLite database with required tables"""
@@ -74,7 +133,8 @@ def setup_database():
         logger.error(f"Database setup failed: {str(e)}")
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def get_all_services():
     """Retrieve list of PM2 services and their status"""
@@ -107,7 +167,7 @@ def check_logs_for_errors(service_name):
         logger.error(f"Failed to check logs for {service_name}: {str(e)}")
         return False, False
 
-# Rest of the endpoint implementations...
+# API endpoints (as before)...
 
 def cleanup_old_data():
     """Cleanup data older than retention period"""
@@ -126,7 +186,8 @@ def cleanup_old_data():
     except Exception as e:
         logger.error(f"Failed to cleanup old data: {str(e)}")
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def init_scheduler():
     """Initialize the background scheduler"""
