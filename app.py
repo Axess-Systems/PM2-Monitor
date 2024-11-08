@@ -67,6 +67,8 @@ api = Api(app,
     prefix='/api'
 )
 
+CORS(app)
+
 # Define namespaces
 health_ns = api.namespace('health', description='Health checks', path='/api/health')
 services_ns = api.namespace('services', description='PM2 services operations', path='/api/services')
