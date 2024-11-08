@@ -28,6 +28,7 @@ class Config:
     
     # Service Settings
     LOG_INTERVAL = int(os.getenv('LOG_INTERVAL', 60))  # seconds
+    LOG_CHECK_TIMEFRAME = int(os.getenv('LOG_CHECK_TIMEFRAME', 5))
     STATUS_RETENTION = int(os.getenv('STATUS_RETENTION', 30))  # days
     MAX_LOG_LINES = int(os.getenv('MAX_LOG_LINES', 100))
     
