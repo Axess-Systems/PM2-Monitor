@@ -149,20 +149,61 @@ def get_all_services():
         logger.error(f"Failed to parse PM2 output: {str(e)}")
         return []
 
-def check_logs_for_errors(service_name):
-    """Check PM2 logs for error and warning patterns"""
+def check_logs_for_errors(service_name, timeframe_minutes=1):
+    """
+    Check PM2 logs for error and warning patterns within the specified timeframe
+    
+    Args:
+        service_name (str): Name of the PM2 service
+        timeframe_minutes (int): Number of minutes to look back
+    """
     try:
-        cmd = f"{Config.PM2_BIN} logs {service_name} --lines {Config.MAX_LOG_LINES} --nostream"
+        # Get timestamp for time window
+        current_time = datetime.now()
+        time_window = current_time - timedelta(minutes=timeframe_minutes)
+        
+        # Get PM2 logs with timestamp included
+        cmd = f"{Config.PM2_BIN} logs {service_name} --lines {Config.MAX_LOG_LINES} --nostream --timestamp"
         logs = subprocess.check_output(cmd.split(), universal_newlines=True)
-        has_error = bool(re.search(r'\[ERROR\]|\berror\b', logs, re.IGNORECASE))
-        has_warning = bool(re.search(r'\[WARNING\]|\bwarn\b', logs, re.IGNORECASE))
+        
+        # Parse logs and check for errors/warnings within timeframe
+        has_error = False
+        has_warning = False
+        
+        for line in logs.splitlines():
+            try:
+                # Extract timestamp from log line (assuming PM2 timestamp format)
+                # Example format: 2024-11-08T12:32:13: [ERROR] ...
+                if ': ' in line:
+                    timestamp_str = line.split(': ')[0]
+                    log_time = datetime.fromisoformat(timestamp_str)
+                    
+                    # Only check logs within the timeframe
+                    if log_time >= time_window:
+                        lower_line = line.lower()
+                        if '[error]' in lower_line or 'error' in lower_line:
+                            logger.debug(f"Found error in {service_name} at {log_time}: {line}")
+                            has_error = True
+                        elif '[warning]' in lower_line or 'warn' in lower_line:
+                            logger.debug(f"Found warning in {service_name} at {log_time}: {line}")
+                            has_warning = True
+            except (ValueError, IndexError) as e:
+                logger.debug(f"Skipping malformed log line: {line} - {str(e)}")
+                continue
         
         if has_error or has_warning:
-            logger.warning(f"Service {service_name} has errors: {has_error}, warnings: {has_warning}")
+            logger.warning(
+                f"Service {service_name} has errors: {has_error}, "
+                f"warnings: {has_warning} in the last {timeframe_minutes} minute(s)"
+            )
         
         return has_error, has_warning
+        
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to check logs for {service_name}: {str(e)}")
+        return False, False
+    except Exception as e:
+        logger.error(f"Error checking logs for {service_name}: {str(e)}")
         return False, False
 
 def determine_status(status_str, cpu_usage, memory_usage, has_error, has_warning):
@@ -197,7 +238,12 @@ def log_status():
                 cpu_usage = monit.get("cpu", 0.0)
                 memory_usage = monit.get("memory", 0.0) / (1024 * 1024)  # Convert to MB
                 
-                has_error, has_warning = check_logs_for_errors(service_name)
+                # Check logs with explicit timeframe
+                has_error, has_warning = check_logs_for_errors(
+                    service_name, 
+                    timeframe_minutes=Config.LOG_CHECK_TIMEFRAME
+                )
+                
                 status_code, status_color = determine_status(
                     status_str, cpu_usage, memory_usage, has_error, has_warning
                 )
@@ -223,8 +269,10 @@ def log_status():
     except Exception as e:
         logger.error(f"Error in log_status: {str(e)}")
     finally:
-        conn.close()
-
+        if conn:
+            conn.close()
+            
+            
 # API Routes
 @app.route('/')
 def index():
