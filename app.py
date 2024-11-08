@@ -29,6 +29,7 @@ class Config:
     PM2_BIN = os.getenv('PM2_BIN', 'pm2')
     HIGH_CPU_THRESHOLD = float(os.getenv('HIGH_CPU_THRESHOLD', 80.0))
     HIGH_MEMORY_THRESHOLD = float(os.getenv('HIGH_MEMORY_THRESHOLD', 500.0))  # MB
+    LOG_CHECK_TIMEFRAME = int(os.getenv('LOG_CHECK_TIMEFRAME', 5))
     LOG_INTERVAL = int(os.getenv('LOG_INTERVAL', 60))  # seconds
     STATUS_RETENTION = int(os.getenv('STATUS_RETENTION', 30))  # days
     MAX_LOG_LINES = int(os.getenv('MAX_LOG_LINES', 100))
