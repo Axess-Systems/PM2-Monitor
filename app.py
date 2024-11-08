@@ -245,19 +245,61 @@ class HealthCheck(Resource):
 @services_ns.route('/')
 class ServicesList(Resource):
     @api.doc(responses={200: 'Success', 500: 'Internal server error'})
-    @api.marshal_list_with(service_model)
     def get(self):
         """Get list of all PM2 services"""
         try:
             services = get_all_services()
+            formatted_services = []
+            
+            for service in services:
+                pm2_env = service.get('pm2_env', {})
+                monit = service.get('monit', {})
+                
+                formatted_services.append({
+                    "name": service.get('name'),
+                    "status": pm2_env.get('status', 'unknown'),
+                    "cpu": monit.get('cpu', 0),
+                    "memory": round(monit.get('memory', 0) / (1024 * 1024), 2),  # Convert to MB
+                    "uptime": pm2_env.get('pm_uptime', 0),
+                    "restarts": pm2_env.get('restart_time', 0),
+                    "pid": pm2_env.get('pid', None),
+                    "pm_exec_path": pm2_env.get('pm_exec_path', ''),
+                    "created_at": pm2_env.get('created_at', None)
+                })
+
             return {
                 "status": "success",
                 "timestamp": datetime.now().isoformat(),
-                "services": services
+                "count": len(formatted_services),
+                "services": formatted_services
             }
         except Exception as e:
             logger.error(f"Error getting services: {str(e)}")
-            return {"status": "error", "message": str(e)}, 500
+            return {
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "message": str(e)
+            }, 500
+
+# Update the service model definition
+service_model = api.model('Service', {
+    'name': fields.String(required=True, description='Service name'),
+    'status': fields.String(required=True, description='Service status'),
+    'cpu': fields.Float(description='CPU usage percentage'),
+    'memory': fields.Float(description='Memory usage (MB)'),
+    'uptime': fields.Integer(description='Uptime in seconds'),
+    'restarts': fields.Integer(description='Number of restarts'),
+    'pid': fields.Integer(description='Process ID'),
+    'pm_exec_path': fields.String(description='Executable path'),
+    'created_at': fields.DateTime(description='Creation timestamp')
+})
+
+services_response = api.model('ServicesResponse', {
+    'status': fields.String(required=True, description='Response status'),
+    'timestamp': fields.DateTime(required=True, description='Response timestamp'),
+    'count': fields.Integer(required=True, description='Number of services'),
+    'services': fields.List(fields.Nested(service_model))
+})
 
 @status_ns.route('/<string:service_name>')
 class ServiceStatus(Resource):
