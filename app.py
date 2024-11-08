@@ -281,24 +281,21 @@ class ServicesList(Resource):
                 "message": str(e)
             }, 500
 
-# Update the service model definition
-service_model = api.model('Service', {
-    'name': fields.String(required=True, description='Service name'),
-    'status': fields.String(required=True, description='Service status'),
-    'cpu': fields.Float(description='CPU usage percentage'),
-    'memory': fields.Float(description='Memory usage (MB)'),
-    'uptime': fields.Integer(description='Uptime in seconds'),
-    'restarts': fields.Integer(description='Number of restarts'),
-    'pid': fields.Integer(description='Process ID'),
-    'pm_exec_path': fields.String(description='Executable path'),
-    'created_at': fields.DateTime(description='Creation timestamp')
+# Updated model definitions
+status_detail_model = api.model('StatusDetail', {
+    'timestamp': fields.DateTime(description='Status timestamp'),
+    'status': fields.Integer(description='Status code'),
+    'cpu_usage': fields.Float(description='CPU usage percentage'),
+    'memory_usage': fields.Float(description='Memory usage (MB)'),
+    'has_error': fields.Boolean(description='Error flag'),
+    'has_warning': fields.Boolean(description='Warning flag')
 })
 
-services_response = api.model('ServicesResponse', {
-    'status': fields.String(required=True, description='Response status'),
-    'timestamp': fields.DateTime(required=True, description='Response timestamp'),
-    'count': fields.Integer(required=True, description='Number of services'),
-    'services': fields.List(fields.Nested(service_model))
+status_response_model = api.model('StatusResponse', {
+    'response_status': fields.String(description='API response status'),
+    'timestamp': fields.DateTime(description='Response timestamp'),
+    'service_name': fields.String(description='Service name'),
+    'data': fields.List(fields.Nested(status_detail_model))
 })
 
 @status_ns.route('/<string:service_name>')
@@ -311,7 +308,7 @@ class ServiceStatus(Resource):
             500: 'Internal server error'
         }
     )
-    @api.marshal_with(status_model)
+    @api.marshal_with(status_response_model)
     def get(self, service_name):
         """Get status history for a specific service"""
         try:
@@ -327,29 +324,95 @@ class ServiceStatus(Resource):
             
             rows = cursor.fetchall()
             if not rows:
-                return {"status": "error", "message": f"Service {service_name} not found"}, 404
+                return api.abort(404, f"Service {service_name} not found")
+
+            status_data = [{
+                "timestamp": datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S'),
+                "status": row[1],
+                "cpu_usage": row[2],
+                "memory_usage": row[3],
+                "has_error": bool(row[4]),
+                "has_warning": bool(row[5])
+            } for row in rows]
 
             return {
-                "status": "success",
+                "response_status": "success",
+                "timestamp": datetime.now(),
                 "service_name": service_name,
-                "data": [{
-                    "timestamp": row[0],
-                    "status": row[1],
-                    "cpu_usage": row[2],
-                    "memory_usage": row[3],
-                    "has_error": bool(row[4]),
-                    "has_warning": bool(row[5])
-                } for row in rows]
+                "data": status_data
             }
         except Exception as e:
             logger.error(f"Error getting status for {service_name}: {str(e)}")
-            return {"status": "error", "message": str(e)}, 500
+            api.abort(500, f"Internal server error: {str(e)}")
         finally:
             if 'conn' in locals():
                 conn.close()
 
+# Updated heatmap model
+heatmap_data_model = api.model('HeatmapData', {
+    'timestamp': fields.DateTime(description='Data point timestamp'),
+    'status': fields.String(description='Status color')
+})
+
+heatmap_response_model = api.model('HeatmapResponse', {
+    'response_status': fields.String(description='API response status'),
+    'timestamp': fields.DateTime(description='Response timestamp'),
+    'service_name': fields.String(description='Service name'),
+    'period': fields.String(description='Time period of data'),
+    'data': fields.List(fields.Nested(heatmap_data_model))
+})
+
 @status_ns.route('/heatmap/<string:service_name>')
 class StatusHeatmap(Resource):
+    @api.doc(
+        params={'service_name': 'Name of the PM2 service'},
+        responses={
+            200: 'Success',
+            404: 'Service not found',
+            500: 'Internal server error'
+        }
+    )
+    @api.marshal_with(heatmap_response_model)
+    def get(self, service_name):
+        """Get status heatmap data for the last 72 hours"""
+        try:
+            conn = sqlite3.connect(Config.DB_PATH)
+            cursor = conn.cursor()
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=72)
+            
+            cursor.execute('''
+                SELECT timestamp, status_color
+                FROM service_status 
+                WHERE service_name = ? 
+                AND timestamp BETWEEN ? AND ?
+                ORDER BY timestamp ASC
+            ''', (service_name, start_time.strftime('%Y-%m-%d %H:%M:%S'), 
+                  end_time.strftime('%Y-%m-%d %H:%M:%S')))
+            
+            rows = cursor.fetchall()
+            if not rows:
+                return api.abort(404, f"No data found for {service_name}")
+
+            return {
+                "response_status": "success",
+                "timestamp": datetime.now(),
+                "service_name": service_name,
+                "period": "72h",
+                "data": [{
+                    "timestamp": datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S'),
+                    "status": row[1]
+                } for row in rows]
+            }
+        except Exception as e:
+            logger.error(f"Error getting heatmap for {service_name}: {str(e)}")
+            api.abort(500, f"Internal server error: {str(e)}")
+        finally:
+            if 'conn' in locals():
+                conn.close()
+                
+                
+                
     @api.doc(
         params={'service_name': 'Name of the PM2 service'},
         responses={
